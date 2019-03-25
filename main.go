@@ -4,22 +4,23 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strconv"
-	"time"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"./grada"
 	"github.com/opsgenie/opsgenie-go-sdk/alertsv2"
 	ogcli "github.com/opsgenie/opsgenie-go-sdk/client"
 )
+
 // Find substring in a slice
 func Find(a []string, x string) string {
 	for i, n := range a {
-			matched, _ := regexp.MatchString(x, n)
-			if matched {
-				return strings.Replace(a[i], x, "", -1) 
-			}
+		matched, _ := regexp.MatchString(x, n)
+		if matched {
+			return strings.Replace(a[i], x, "", -1)
+		}
 	}
 	return ""
 }
@@ -37,10 +38,10 @@ func main() {
 	}
 	// map severity tag values to integers for sorting in grafana
 	severity := map[string]int{
-    "info": 100,
-    "warning":   200,
+		"info":     100,
+		"warning":  200,
 		"critical": 300,
-		"": 0,
+		"":         0,
 	}
 	// OpsGenie client
 	cli := new(ogcli.OpsGenieClient)
@@ -97,7 +98,7 @@ func main() {
 					row := []grada.Row{
 						{
 							alert.Message,
-							Find(alert.Tags, "alert_type: "), // Alert Type
+							Find(alert.Tags, "alert_type: "),         // Alert Type
 							severity[Find(alert.Tags, "severity: ")], // Severity
 							// alert.Tags,
 							alert.Status,

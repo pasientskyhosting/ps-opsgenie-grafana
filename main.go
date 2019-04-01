@@ -37,7 +37,7 @@ func main() {
 		log.Fatal("Environment variable OPSGENIE_API_KEY not set")
 	}
 	// map severity tag values to integers for sorting in grafana
-	severity := map[string]int{
+	severityMap := map[string]int{
 		"info":     100,
 		"warning":  200,
 		"critical": 300,
@@ -52,24 +52,43 @@ func main() {
 		{Text: "Message", Type: "string"},
 		{Text: "AlertType", Type: "string"},
 		{Text: "Severity", Type: "int"},
-		// {Text: "Tags", Type: "[]string"},
 		{Text: "Status", Type: "string"},
-		{Text: "IsSeen", Type: "bool"},
-		{Text: "Acknowledged", Type: "bool"},
+		{Text: "IsSeen", Type: "int"},
+		{Text: "Acknowledged", Type: "int"},
 		{Text: "Created", Type: "time"},
 		{Text: "Updated", Type: "time"},
 		{Text: "TinyId", Type: "string"},
 		{Text: "Owner", Type: "string"},
+		{Text: "Cluster", Type: "string"},
+		{Text: "HostName", Type: "string"},
 		{Text: "Description", Type: "string"},
 	}
-	// create metric
-	OPSGENIEmetric, err := dash.CreateMetricWithBufSize("OpsGenie", 1)
+	// create metrics
+	OPSGENIEOpenAlerts, err := dash.CreateMetricWithBufSize("OpsGenieOpenAlerts", 10)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	OPSGENIEOpenAlertsCritical, err := dash.CreateMetricWithBufSize("OpsGenieOpenAlertsCritical", 10)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	OPSGENIEOpenAlertsWarning, err := dash.CreateMetricWithBufSize("OpsGenieOpenAlertsWarning", 10)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	OPSGENIEOpenAlertsOther, err := dash.CreateMetricWithBufSize("OpsGenieOpenAlertsOther", 10)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	for {
-		OPSGENIEmetric.Add(1)
-		rows := []grada.Row{}
+		rowsOpenCount := map[string]float64{
+			"critical": 0,
+			"warning": 0,
+			"other": 0,
+			"total": 0,
+		}
+		rows, rowsCritical, rowsWarning := []grada.Row{}, []grada.Row{}, []grada.Row{}
+		rowsAck, rowsAckCritical, rowsAckWarning  := []grada.Row{}, []grada.Row{}, []grada.Row{}
 		// get alert list
 		response, err := alertCli.List(alertsv2.ListAlertRequest{
 			Limit:                100,
@@ -94,13 +113,16 @@ func main() {
 					continue
 				} else {
 					alertDetail := response2.Alert
+					alertType := Find(alert.Tags, "alert_type: ")
+					severity := Find(alert.Tags, "severity: ")
+					cluster := Find(alert.Tags, "cluster: ")
+					hostname := Find(alert.Tags, "hostname: ")
 					// create and append grafana row
 					row := []grada.Row{
 						{
 							alert.Message,
-							Find(alert.Tags, "alert_type: "),         // Alert Type
-							severity[Find(alert.Tags, "severity: ")], // Severity
-							// alert.Tags,
+							alertType,
+							severityMap[severity],
 							alert.Status,
 							alert.IsSeen,
 							alert.Acknowledged,
@@ -108,18 +130,52 @@ func main() {
 							alert.UpdatedAt,
 							alert.TinyID,
 							alert.Owner,
+							cluster,
+							hostname,
 							alertDetail.Description,
 						},
 					}
-					rows = append(rows, row...)
+					// Lame sorting	
+					if alert.Acknowledged {
+						switch severity {
+						case "critical":
+							rowsAckCritical = append(rowsAckCritical, row...)
+						case "warning":
+							rowsAckWarning = append(rowsAckWarning, row...)
+						default:
+							rowsAck = append(rowsAck, row...)
+						}
+					} else {
+						rowsOpenCount["total"] ++
+						switch severity {
+						case "critical":
+							rowsOpenCount["critical"] ++
+							rowsCritical = append(rowsCritical, row...)
+						case "warning":
+							rowsOpenCount["warning"] ++
+							rowsWarning = append(rowsWarning, row...)
+						default:
+							rowsOpenCount["other"] ++
+							rows = append(rowsAck, row...)
+						}
+					}
 				}
 			}
 		}
+		OPSGENIEOpenAlerts.Add(rowsOpenCount["total"])
+		OPSGENIEOpenAlertsCritical.Add(rowsOpenCount["critical"])
+		OPSGENIEOpenAlertsWarning.Add(rowsOpenCount["warning"])
+		OPSGENIEOpenAlertsOther.Add(rowsOpenCount["other"])
+		rowsCritical = append(rowsCritical, rowsWarning...)
+		rowsCritical = append(rowsCritical, rows...)
+		rowsCritical = append(rowsCritical, rowsAckCritical...)
+		rowsCritical = append(rowsCritical, rowsAckWarning...)
+		rowsCritical = append(rowsCritical, rowsAck...)
 		// update grafana table
 		grada.Table = []grada.TableResponse{
 			{
 				Columns: columns,
-				Rows:    rows,
+				Rows:    rowsCritical,
 				Type:    "table",
 			},
 		}

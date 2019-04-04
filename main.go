@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -37,11 +38,12 @@ func main() {
 		log.Fatal("Environment variable OPSGENIE_API_KEY not set")
 	}
 	// map severity tag values to integers for sorting in grafana
-	severityMap := map[string]int{
-		"info":     100,
-		"warning":  200,
-		"critical": 300,
-		"":         0,
+	priorityMap := map[alertsv2.Priority]int{
+		alertsv2.P1: 1,
+		alertsv2.P2: 2,
+		alertsv2.P3: 3,
+		alertsv2.P4: 4,
+		alertsv2.P5: 5,
 	}
 	// OpsGenie client
 	cli := new(ogcli.OpsGenieClient)
@@ -51,7 +53,7 @@ func main() {
 	columns := []grada.Column{
 		{Text: "Message", Type: "string"},
 		{Text: "AlertType", Type: "string"},
-		{Text: "Severity", Type: "int"},
+		{Text: "Priority", Type: "int"},
 		{Text: "Status", Type: "string"},
 		{Text: "IsSeen", Type: "int"},
 		{Text: "Acknowledged", Type: "int"},
@@ -68,28 +70,41 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	OPSGENIEOpenAlertsCritical, err := dash.CreateMetricWithBufSize("OpsGenieOpenAlertsCritical", 10)
+	OPSGENIEOpenAlertsP1, err := dash.CreateMetricWithBufSize("OpsGenieOpenAlertsP1", 10)
 	if err != nil {
 		log.Fatalln(err)
 	}
-	OPSGENIEOpenAlertsWarning, err := dash.CreateMetricWithBufSize("OpsGenieOpenAlertsWarning", 10)
+	OPSGENIEOpenAlertsP2, err := dash.CreateMetricWithBufSize("OpsGenieOpenAlertsP2", 10)
 	if err != nil {
 		log.Fatalln(err)
 	}
-	OPSGENIEOpenAlertsOther, err := dash.CreateMetricWithBufSize("OpsGenieOpenAlertsOther", 10)
+	OPSGENIEOpenAlertsP3, err := dash.CreateMetricWithBufSize("OpsGenieOpenAlertsP3", 10)
 	if err != nil {
 		log.Fatalln(err)
 	}
+	OPSGENIEOpenAlertsP4, err := dash.CreateMetricWithBufSize("OpsGenieOpenAlertsP4", 10)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	OPSGENIEOpenAlertsP5, err := dash.CreateMetricWithBufSize("OpsGenieOpenAlertsP5", 10)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
 	for {
-		rowsOpenCount := map[string]float64{
-			"critical": 0,
-			"warning": 0,
-			"other": 0,
-			"total": 0,
+		// alert counter by priority
+		rowsOpenCount := map[alertsv2.Priority]float64{
+			alertsv2.P1: 0,
+			alertsv2.P2: 0,
+			alertsv2.P3: 0,
+			alertsv2.P4: 0,
+			alertsv2.P5: 0,
 		}
-		rows, rowsCritical, rowsWarning := []grada.Row{}, []grada.Row{}, []grada.Row{}
-		rowsAck, rowsAckCritical, rowsAckWarning  := []grada.Row{}, []grada.Row{}, []grada.Row{}
-		// get alert list
+		// alert counter total
+		var rowsOpenTotal float64
+		// split acked and unacked alerts
+		rows, rowsAck := []grada.Row{}, []grada.Row{}
+		// get alert list from OpsGenie
 		response, err := alertCli.List(alertsv2.ListAlertRequest{
 			Limit:                100,
 			Offset:               0,
@@ -100,21 +115,21 @@ func main() {
 			fmt.Println(err.Error())
 			break
 		} else {
-			// get alert details
+			// get alert details - the Description field lives here
 			for _, alert := range response.Alerts {
 				response2, err2 := alertCli.Get(alertsv2.GetAlertRequest{
 					Identifier: &alertsv2.Identifier{
 						TinyID: alert.TinyID,
 					},
 				})
-
 				if err2 != nil {
 					fmt.Println(err2.Error())
 					continue
 				} else {
+					// alert Details
 					alertDetail := response2.Alert
+					// pull out PS custom tags
 					alertType := Find(alert.Tags, "alert_type: ")
-					severity := Find(alert.Tags, "severity: ")
 					cluster := Find(alert.Tags, "cluster: ")
 					hostname := Find(alert.Tags, "hostname: ")
 					// create and append grafana row
@@ -122,7 +137,7 @@ func main() {
 						{
 							alert.Message,
 							alertType,
-							severityMap[severity],
+							priorityMap[alert.Priority],
 							alert.Status,
 							alert.IsSeen,
 							alert.Acknowledged,
@@ -135,47 +150,41 @@ func main() {
 							alertDetail.Description,
 						},
 					}
-					// Lame sorting	
+					// acked and unacked in their own slice
 					if alert.Acknowledged {
-						switch severity {
-						case "critical":
-							rowsAckCritical = append(rowsAckCritical, row...)
-						case "warning":
-							rowsAckWarning = append(rowsAckWarning, row...)
-						default:
-							rowsAck = append(rowsAck, row...)
-						}
+						rowsAck = append(rowsAck, row...)
 					} else {
-						rowsOpenCount["total"] ++
-						switch severity {
-						case "critical":
-							rowsOpenCount["critical"] ++
-							rowsCritical = append(rowsCritical, row...)
-						case "warning":
-							rowsOpenCount["warning"] ++
-							rowsWarning = append(rowsWarning, row...)
-						default:
-							rowsOpenCount["other"] ++
-							rows = append(rowsAck, row...)
-						}
+						// total unacked
+						rowsOpenTotal++
+						// count by priority
+						rowsOpenCount[alert.Priority]++
+						rows = append(rows, row...)
 					}
+					
 				}
 			}
 		}
-		OPSGENIEOpenAlerts.Add(rowsOpenCount["total"])
-		OPSGENIEOpenAlertsCritical.Add(rowsOpenCount["critical"])
-		OPSGENIEOpenAlertsWarning.Add(rowsOpenCount["warning"])
-		OPSGENIEOpenAlertsOther.Add(rowsOpenCount["other"])
-		rowsCritical = append(rowsCritical, rowsWarning...)
-		rowsCritical = append(rowsCritical, rows...)
-		rowsCritical = append(rowsCritical, rowsAckCritical...)
-		rowsCritical = append(rowsCritical, rowsAckWarning...)
-		rowsCritical = append(rowsCritical, rowsAck...)
-		// update grafana table
+		// add values to our metrics
+		OPSGENIEOpenAlerts.Add(rowsOpenTotal)
+		OPSGENIEOpenAlertsP1.Add(rowsOpenCount[alertsv2.P1])
+		OPSGENIEOpenAlertsP2.Add(rowsOpenCount[alertsv2.P2])
+		OPSGENIEOpenAlertsP3.Add(rowsOpenCount[alertsv2.P3])
+		OPSGENIEOpenAlertsP4.Add(rowsOpenCount[alertsv2.P4])
+		OPSGENIEOpenAlertsP5.Add(rowsOpenCount[alertsv2.P5])
+		// sort unacked on priority
+		sort.Slice(rows, func(i, j int) bool {
+			return rows[i][2].(int) < rows[j][2].(int)
+		})
+		// sort acked on priority
+		sort.Slice(rowsAck, func(i, j int) bool {
+			return rowsAck[i][2].(int) < rowsAck[j][2].(int)
+		})
+		// put acked on the bottom
+		rows = append(rows, rowsAck...)
 		grada.Table = []grada.TableResponse{
 			{
 				Columns: columns,
-				Rows:    rowsCritical,
+				Rows:    rows,
 				Type:    "table",
 			},
 		}

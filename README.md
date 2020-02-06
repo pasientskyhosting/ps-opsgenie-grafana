@@ -5,7 +5,7 @@ You need these environment variables:
 - `OPSGENIE_API_KEY` - your OpsGenie API key
 - `OPSGENIE_FETCH_INTERVAL` - how often (in seconds) to fetch alerts from OpsGenie (default: 60)
 - `METRICS_PORT` - the port gropsgenie should listen on (default: 3001)
-= `OPSGENIE_ALERT_QUERY` - opsgenie query for alert list (default: 'status:open')
+- `OPSGENIE_ALERT_QUERY` - opsgenie query for alert list (default: 'status:open')
 
 ## Usage
 ```

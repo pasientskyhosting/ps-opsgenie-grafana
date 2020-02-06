@@ -10,7 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"./grada"
+	"pasientskyhosting/ps-opsgenie-grafana/grada"
+
 	"github.com/opsgenie/opsgenie-go-sdk/alertsv2"
 	ogcli "github.com/opsgenie/opsgenie-go-sdk/client"
 )
@@ -36,6 +37,10 @@ func main() {
 	apiKey := os.Getenv("OPSGENIE_API_KEY")
 	if apiKey == "" {
 		log.Fatal("Environment variable OPSGENIE_API_KEY not set")
+	}
+	opsGenieAlertQuery := os.Getenv("OPSGENIE_ALERT_QUERY")
+	if opsGenieAlertQuery == "" {
+		opsGenieAlertQuery = "status:open"
 	}
 	// map severity tag values to integers for sorting in grafana
 	priorityMap := map[alertsv2.Priority]int{
@@ -108,7 +113,7 @@ func main() {
 		response, err := alertCli.List(alertsv2.ListAlertRequest{
 			Limit:                100,
 			Offset:               0,
-			Query:                "status=open",
+			Query:                opsGenieAlertQuery,
 			SearchIdentifierType: alertsv2.Name,
 		})
 		if err != nil {
@@ -160,7 +165,7 @@ func main() {
 						rowsOpenCount[alert.Priority]++
 						rows = append(rows, row...)
 					}
-					
+
 				}
 			}
 		}

@@ -124,7 +124,7 @@ func main() {
 			for _, alert := range response.Alerts {
 				response2, err2 := alertCli.Get(alertsv2.GetAlertRequest{
 					Identifier: &alertsv2.Identifier{
-						TinyID: alert.TinyID,
+						ID: alert.ID,
 					},
 				})
 				if err2 != nil {
